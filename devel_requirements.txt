@@ -1,0 +1,5 @@
+# Development
+isort>=4.2.5,<5
+pylint==2.4.4
+pylint_quotes
+pylint_import_modules
