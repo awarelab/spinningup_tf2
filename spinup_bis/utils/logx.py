@@ -5,14 +5,15 @@ Logs to a tab-separated-values file (path/to/output_directory/progress.txt)
 
 import atexit
 import json
-import time
 import os
 import os.path as osp
+import time
 
 import numpy as np
 
 from spinup_bis.utils import mpi_tools
 from spinup_bis.utils import serialization_utils
+
 
 color2num = dict(
     gray=30,
@@ -52,7 +53,8 @@ class Logger:
     def __init__(self,
                  output_dir=None,
                  output_fname='progress.txt',
-                 exp_name=None):
+                 exp_name=None,
+                 neptune_kwargs=None):
         """Initialize a Logger.
 
         Args:
@@ -69,6 +71,9 @@ class Logger:
                 will know to group them. (Use case: if you run the same
                 hyperparameter configuration with multiple random seeds, you
                 should give them all the same ``exp_name``.)
+
+            neptune_kwargs (dict): Neptune init kwargs. If None, then Neptune
+                logging is disabled.
         """
         if mpi_tools.proc_id() == 0:
             self.output_dir = output_dir or '/tmp/experiments/%i' % int(
@@ -83,9 +88,17 @@ class Logger:
             atexit.register(self.output_file.close)
             print(colorize('Logging data to %s' %
                            self.output_file.name, 'green', bold=True))
+
+            if neptune_kwargs is not None:
+                import neptune.new as neptune
+                self.neptune_run = neptune.init(**neptune_kwargs)
+            else:
+                self.neptune_run = None
         else:
             self.output_dir = None
             self.output_file = None
+            self.neptune_run = None
+
         self.first_row = True
         self.log_headers = []
         self.log_current_row = {}
@@ -141,6 +154,10 @@ class Logger:
             with open(osp.join(self.output_dir, 'config.json'), 'w') as out:
                 out.write(output)
 
+            if self.neptune_run is not None:
+                print(colorize('Saving config to Neptune...\n', color='cyan'))
+                self.neptune_run['parameters'] = config_json
+
     def dump_tabular(self):
         """Write all of the diagnostics from the current iteration.
 
@@ -159,6 +176,13 @@ class Logger:
                 valstr = '%8.3g' % val if hasattr(val, '__float__') else val
                 print(fmt % (key, valstr))
                 vals.append(val)
+                if self.neptune_run is not None:
+                    step = self.log_current_row.get('TotalEnvInteracts')
+                    if 'Test' in key:
+                        nkey = 'test/' + key
+                    else:
+                        nkey = 'train/' + key
+                    self.neptune_run[nkey].log(val, step)
             print('-' * n_slashes, flush=True)
             if self.output_file is not None:
                 if self.first_row:

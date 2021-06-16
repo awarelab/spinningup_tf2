@@ -1,5 +1,7 @@
 """Example of running SpinUp Bis algorithms."""
 
+import os
+
 import gym
 import tensorflow as tf
 
@@ -10,11 +12,18 @@ def env_fn():
     return gym.make('Pendulum-v0')
 
 
+if 'NEPTUNE_PROJECT_NAME' in os.environ:
+    neptune_kwargs = dict(project=os.environ['NEPTUNE_PROJECT_NAME'])
+else:
+    neptune_kwargs = None
+
+
 ac_kwargs = dict(hidden_sizes=[16, 16],
                  activation=tf.nn.relu)
 
 logger_kwargs = dict(output_dir='out',
-                     exp_name='Watch out, Pendulum!')
+                     exp_name='Watch out, Pendulum!',
+                     neptune_kwargs=neptune_kwargs)
 
 agent(env_fn=env_fn,
       ac_kwargs=ac_kwargs,

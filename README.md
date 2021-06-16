@@ -16,6 +16,10 @@ Follow the installation manual of the Spinning Up [here](https://spinningup.open
 
 See the `run_example.py` and inspect the algorithms docstrings for details on the parameters available.
 
+### Neptune logging
+
+This code supports config and metrics logging to the [Neptune.ai](https://neptune.ai) platform. You need to specify two environment variables: `NEPTUNE_API_TOKEN` and `NEPTUNE_PROJECT_NAME`. See `run_example.py` for details.
+
 ## Performance
 
 We compare the implementations in TF1 from the original SpinUp repository with our TF2 implementations.

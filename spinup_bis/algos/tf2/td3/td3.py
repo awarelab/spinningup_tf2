@@ -145,9 +145,9 @@ def td3(env_fn, actor_critic=core.mlp_actor_critic, ac_kwargs=None, seed=0,
             noise.
 
     """
-
+    config = locals()
     logger = logx.EpochLogger(**(logger_kwargs or {}))
-    logger.save_config(locals())
+    logger.save_config(config)
 
     random.seed(seed)
     tf.random.set_seed(seed)
