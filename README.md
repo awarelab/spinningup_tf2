@@ -14,7 +14,7 @@ Follow the installation manual of the Spinning Up [here](https://spinningup.open
 
 ## Running
 
-See the `run_example.py` and inspect the algorithms docstrings for details on the parameters available.
+See the `run_example.py` and inspect the algorithms docstrings for details on the parameters available. The `run_policy.py` script allows you to run and visualize the saved checkpoints. Note: it is prepared for a SAC's checkpoint.
 
 ### Neptune logging
 
