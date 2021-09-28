@@ -33,4 +33,6 @@ agent(env_fn=env_fn,
       start_steps=1_000,
       update_after=1_000,
       max_ep_len=200,
-      logger_kwargs=logger_kwargs)
+      logger_kwargs=logger_kwargs,
+      save_freq=200_000,
+      save_path='./out/checkpoint')
