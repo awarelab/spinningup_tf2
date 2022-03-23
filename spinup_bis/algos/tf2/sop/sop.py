@@ -8,13 +8,14 @@ import time
 import numpy as np
 import tensorflow as tf
 
-from spinup_bis.algos.tf2.bsp import core
+from spinup_bis.algos.tf2.sop import core
 from spinup_bis.utils import logx
+
 
 class ReplayBuffer:
     """A simple FIFO experience replay buffer with ERE."""
 
-    def __init__(self, obs_dim, act_dim, size, ac_number, max_ep_len,
+    def __init__(self, obs_dim, act_dim, size, max_ep_len,
                  init_ere_coeff):
         self.obs1_buf = np.zeros([size, obs_dim], dtype=np.float32)
         self.obs2_buf = np.zeros([size, obs_dim], dtype=np.float32)
@@ -27,7 +28,6 @@ class ReplayBuffer:
         self.obs_dim = obs_dim
         self.act_dim = act_dim
         self.max_size = size
-        self.ac_number = ac_number
         self.init_ere_coeff = init_ere_coeff
         self.ere_coeff = init_ere_coeff
 
@@ -64,9 +64,9 @@ class ReplayBuffer:
         # Shifts the range to the actual end of the buffer.
         idxs = (idxs + self.ptr) % self.size
 
-        obs_shape = [self.ac_number, batch_size, self.obs_dim]
-        act_shape = [self.ac_number, batch_size, self.act_dim]
-        rew_shape = [self.ac_number, batch_size]
+        obs_shape = [batch_size, self.obs_dim]
+        act_shape = [batch_size, self.act_dim]
+        rew_shape = [batch_size]
         obs1 = np.broadcast_to(self.obs1_buf[idxs], obs_shape)
         obs2 = np.broadcast_to(self.obs2_buf[idxs], obs_shape)
         acts = np.broadcast_to(self.acts_buf[idxs], act_shape)
@@ -105,7 +105,6 @@ def sop(
     env_fn,
     actor_critic=core.MLPActorCriticFactory,
     ac_kwargs=None,
-    ac_number=1,
     total_steps=1_000_000,
     replay_size=1_000_000,
     init_ere_coeff=0.995,
@@ -119,9 +118,6 @@ def sop(
     train_intensity=1,
     act_noise=0.29,
     use_noise_for_exploration=True,
-    bellman_temp=10,
-    use_weighted_bellman_backup=False,
-    use_vote_policy=False,
     max_ep_len=1_000,
     num_test_episodes=10,
     logger_kwargs=None,
@@ -157,8 +153,6 @@ def sop(
 
         ac_kwargs (dict): Any kwargs appropriate for the actor_critic
             function you provided to the agent.
-
-        ac_number (int): Number of the actor-critic models in the ensemble.
 
         total_steps (int): Number of environment interactions to run and train
             the agent.
@@ -205,15 +199,6 @@ def sop(
         use_noise_for_exploration (bool): If the noise should be added to the
             behaviour policy.
 
-        bellman_temp (float): Temperature parameter used in calculating the
-            weight for the weighted Bellman backup.
-
-        use_weighted_bellman_backup (bool): Whether the Bellman backup should
-            be reweighted based on the critics ensemble disagreement.
-
-        use_vote_policy (bool): If true use vote_policy during evaluation
-            instead of default mean_policy.
-
         num_test_episodes (int): Number of episodes to test the deterministic
             policy at the end of each epoch.
 
@@ -230,9 +215,9 @@ def sop(
         save_path (str): The path specifying where to save the trained actor
             model. Setting the value to None turns off the saving.
 
-
         seed (int): Seed for random number generators.
     """
+    print("Running SOP")
     pwd = os.getcwd()  # pylint: disable=possibly-unused-variable
     config = locals()
     logger = logx.EpochLogger(**(logger_kwargs or {}))
@@ -254,7 +239,6 @@ def sop(
     ac_kwargs['observation_space'] = env.observation_space
     ac_kwargs['action_space'] = env.action_space
     ac_kwargs['act_noise'] = act_noise
-    ac_kwargs['ac_number'] = ac_number
 
     # Network
     ac_factory = actor_critic(**ac_kwargs)
@@ -283,7 +267,6 @@ def sop(
     replay_buffer = ReplayBuffer(obs_dim=obs_dim,
                                  act_dim=act_dim,
                                  size=replay_size,
-                                 ac_number=ac_number,
                                  max_ep_len=max_ep_len,
                                  init_ere_coeff=init_ere_coeff)
 
@@ -291,41 +274,12 @@ def sop(
     optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
 
     @tf.function
-    def vote_evaluation_policy(obs):
-        obs_actor = tf.broadcast_to(obs, [ac_number, 1, *obs.shape])
-        obs_critic = tf.broadcast_to(obs, [ac_number, ac_number, *obs.shape])
-
-        mu, _ = actor(obs_actor)
-        # One action per batch.
-        act = tf.reshape(mu, [1, ac_number, *mu.shape[2:]])
-        # The same action for each component.
-        act = tf.broadcast_to(act, [ac_number, ac_number, *mu.shape[2:]])
-        # Evaluate each action by all components.
-        qs = critic1([obs_critic, act])
-        # Average over ensemble.
-        qs = tf.reduce_mean(qs, axis=0)
-
-        return mu[tf.math.argmax(qs)][0]
-
-    @tf.function
-    def mean_evaluation_policy(obs):
-        obs_actor = tf.broadcast_to(obs, [ac_number, 1, *obs.shape])
-        mu, _ = actor(obs_actor)
-        return tf.reduce_mean(mu, axis=0)[0]
-
-    if use_vote_policy:
-        evaluation_policy = vote_evaluation_policy
-    else:
-        evaluation_policy = mean_evaluation_policy
-
-    @tf.function
-    def behavioural_policy(obs, ac_idx, use_noise):
-        obs = tf.broadcast_to(obs, [ac_number, 1, *obs.shape])
-        mu, pi = actor(obs)
+    def get_action(o, use_noise=False):
+        mu, pi = actor(tf.expand_dims(o, 0))
         if use_noise:
-            return pi[ac_idx, 0]
+            return pi[0]
         else:
-            return mu[ac_idx, 0]
+            return mu[0]
 
     @tf.function
     def learn_on_batch(obs1, obs2, acts, rews, done):
@@ -351,13 +305,7 @@ def sop(
             q1_loss = tf.reduce_mean((q_backup - q1) ** 2, axis=0)
             q2_loss = tf.reduce_mean((q_backup - q2) ** 2, axis=0)
 
-            if use_weighted_bellman_backup:
-                q_std = tf.math.reduce_std(min_target_q, axis=0)
-                q_weight = tf.math.sigmoid(-q_std * bellman_temp) + 0.5
-
-                q_weight *= 0.5
-            else:
-                q_weight = 0.5
+            q_weight = 0.5
 
             value_loss = tf.reduce_mean(q_weight * (q1_loss + q2_loss))
 
@@ -390,7 +338,7 @@ def sop(
             o, d, ep_ret, ep_len, task_ret = test_env.reset(), False, 0, 0, 0
             while not (d or (ep_len == max_ep_len)):
                 o, r, d, info = test_env.step(
-                    evaluation_policy(tf.convert_to_tensor(o)))
+                    get_action(tf.convert_to_tensor(o)))
                 ep_ret += r
                 ep_len += 1
                 task_ret += info.get('reward_task', 0)
@@ -401,12 +349,11 @@ def sop(
 
     def reset_episode(epoch):
         o, ep_ret, ep_len, task_ret = env.reset(), 0, 0, 0
-        actor_idx = np.random.choice(ac_number)  # Select policy
-        return o, ep_ret, ep_len, task_ret, actor_idx
+        return o, ep_ret, ep_len, task_ret
 
     # Prepare for interaction with environment
     start_time = time.time()
-    o, ep_ret, ep_len, task_ret, actor_idx = reset_episode(epoch=0)
+    o, ep_ret, ep_len, task_ret = reset_episode(epoch=0)
 
     # Main loop: collect experience in env and update/log each epoch
     iter_time = time.time()
@@ -416,8 +363,7 @@ def sop(
         # from a uniform distribution for better exploration. Afterwards,
         # use the learned policy (with some noise, via act_noise).
         if t > start_steps:
-            a = behavioural_policy(tf.convert_to_tensor(o),
-                                   actor_idx,
+            a = get_action(tf.convert_to_tensor(o),
                                    use_noise_for_exploration)
         else:
             a = env.action_space.sample()
@@ -437,7 +383,6 @@ def sop(
         replay_buffer.store(o, a, r, o2, d)
 
         # Trace experience.
-        info['actor_idx'] = actor_idx
         info['total_steps'] = t + 1
 
         # Super critical, easy to overlook step: make sure to update
@@ -451,8 +396,8 @@ def sop(
                          TaskRet=task_ret,
                          TaskSolved=info.get('is_solved', False))
             replay_buffer.end_trajectory(ep_ret)
-            o, ep_ret, ep_len, task_ret, actor_idx = reset_episode(
-                epoch=(t + 1) // log_every)
+            o, ep_ret, ep_len, task_ret = \
+                reset_episode(epoch=(t + 1) // log_every)
 
         # Update handling
         if (t + 1) >= update_after and (t + 1) % update_every == 0:
@@ -467,14 +412,12 @@ def sop(
                                LossPi=results['pi_loss'],
                                LossQ1=results['q1_loss'],
                                LossQ2=results['q2_loss'])
-                for idx, (q1, q2) in enumerate(
-                        zip(results['q1'], results['q2'])):
-                    metrics.update({
-                        f'Q1Vals_{idx + 1}': q1,
-                        f'Q2Vals_{idx + 1}': q2,
-                        f'QDiff_{idx + 1}': np.abs(q1 - q2),
-                    })
-                logger.store(**metrics)
+                metrics.update({
+                    f'Q1Vals': results['q1'],
+                    f'Q2Vals': results['q2'],
+                    f'QDiff': np.abs(results['q1'] - results['q2']),
+                })
+            logger.store(**metrics)
 
         # End of epoch wrap-up
         if ((t + 1) % log_every == 0) or (t + 1 == total_steps):
@@ -495,10 +438,9 @@ def sop(
             logger.log_tabular('LossPi', average_only=True)
             logger.log_tabular('LossQ1', average_only=True)
             logger.log_tabular('LossQ2', average_only=True)
-            for idx in range(ac_number):
-                logger.log_tabular(f'Q1Vals_{idx + 1}', with_min_and_max=True)
-                logger.log_tabular(f'Q2Vals_{idx + 1}', with_min_and_max=True)
-                logger.log_tabular(f'QDiff_{idx + 1}', with_min_and_max=True)
+            logger.log_tabular(f'Q1Vals', with_min_and_max=True)
+            logger.log_tabular(f'Q2Vals', with_min_and_max=True)
+            logger.log_tabular(f'QDiff', with_min_and_max=True)
             logger.log_tabular('StepsPerSecond',
                                log_every / (time.time() - iter_time))
             logger.log_tabular('Time', time.time() - start_time)
