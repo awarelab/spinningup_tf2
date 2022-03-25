@@ -5,8 +5,8 @@ import os
 import gym
 import tensorflow as tf
 
-from spinup_bis import sac_tf2 as agent  # pylint: disable=import-only-modules
-from spinup_bis import sop_tf2 as agent_sop  # pylint: disable=import-only-modules
+from spinup_bis import sac_tf2 as sac # pylint: disable=import-only-modules
+from spinup_bis import sop_tf2 as sop # pylint: disable=import-only-modules
 
 
 def env_fn():
@@ -16,7 +16,8 @@ def env_fn():
 def _parse_args():
     parser = argparse.ArgumentParser(description='"Spinning Up TF2 example".')
     parser.add_argument('--output-dir', nargs='?', default="./out", help='Directory for saving checkpoints')
-    parser.add_argument('--use-sop', action='store_true')
+    parser.add_argument('--algorithm', nargs='?', default="sac", help='Currently supported: sac, sop')
+
 
     parser.parse_args()
     return parser.parse_args()
@@ -26,8 +27,12 @@ if __name__ == '__main__':
     args = _parse_args()
     save_path = args.output_dir + '/checkpoint'
 
-    if args.use_sop:
-       agent = agent_sop
+    if args.algorithm == "sac":
+        agent = sac
+    elif args.algorithm == "sop":
+        agent = sop
+    else:
+        raise ValueError("Algorithm not supported!")
 
     if 'NEPTUNE_PROJECT_NAME' in os.environ:
         neptune_kwargs = dict(project=os.environ['NEPTUNE_PROJECT_NAME'])

@@ -305,9 +305,7 @@ def sop(
             q1_loss = tf.reduce_mean((q_backup - q1) ** 2, axis=0)
             q2_loss = tf.reduce_mean((q_backup - q2) ** 2, axis=0)
 
-            q_weight = 0.5
-
-            value_loss = tf.reduce_mean(q_weight * (q1_loss + q2_loss))
+            value_loss = tf.reduce_mean((q1_loss + q2_loss) / 2)
 
         actor_gradients = g.gradient(pi_loss, actor.trainable_variables)
         optimizer.apply_gradients(
@@ -337,8 +335,7 @@ def sop(
         for _ in range(num_test_episodes):
             o, d, ep_ret, ep_len, task_ret = test_env.reset(), False, 0, 0, 0
             while not (d or (ep_len == max_ep_len)):
-                o, r, d, info = test_env.step(
-                    get_action(tf.convert_to_tensor(o)))
+                o, r, d, info = test_env.step(get_action(tf.convert_to_tensor(o)))
                 ep_ret += r
                 ep_len += 1
                 task_ret += info.get('reward_task', 0)
@@ -364,7 +361,7 @@ def sop(
         # use the learned policy (with some noise, via act_noise).
         if t > start_steps:
             a = get_action(tf.convert_to_tensor(o),
-                                   use_noise_for_exploration)
+                           use_noise_for_exploration)
         else:
             a = env.action_space.sample()
 
@@ -405,18 +402,18 @@ def sop(
             for n in range(number_of_updates):
                 most_recent = (
                     replay_buffer.max_size * replay_buffer.ere_coeff ** (
-                        (n + 1) * 1000 / number_of_updates))
+                    (n + 1) * 1000 / number_of_updates))
                 batch = replay_buffer.sample_batch(batch_size, most_recent)
                 results = learn_on_batch(**batch)
-                metrics = dict(EREcoeff=replay_buffer.ere_coeff,
-                               LossPi=results['pi_loss'],
-                               LossQ1=results['q1_loss'],
-                               LossQ2=results['q2_loss'])
-                metrics.update({
-                    f'Q1Vals': results['q1'],
-                    f'Q2Vals': results['q2'],
-                    f'QDiff': np.abs(results['q1'] - results['q2']),
-                })
+                metrics = dict(
+                    EREcoeff=replay_buffer.ere_coeff,
+                    LossPi=results['pi_loss'],
+                    LossQ1=results['q1_loss'],
+                    LossQ2=results['q2_loss'],
+                    Q1Vals=results['q1'],
+                    Q2Vals=results['q2'],
+                    QDiff=np.abs(results['q1'] - results['q2'])
+                )
             logger.store(**metrics)
 
         # End of epoch wrap-up
